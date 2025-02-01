@@ -64,3 +64,72 @@ def import_to_fuel_prices(conn):
         conn.rollback()
         logger.error(f"Error importing data: {e}")
         raise e
+
+
+def update_stations(conn):
+    try:
+        with conn.cursor() as cur:
+            # Find non added stations
+            find_stations_query = """
+                SELECT DISTINCT ifp.station_id 
+                FROM instant_fr_fuel_price ifp
+                LEFT JOIN stations s ON s.id = ifp.station_id
+                WHERE s.id IS NULL
+            """
+            cur.execute(find_stations_query)
+            stations_to_update = [row[0] for row in cur.fetchall()]
+            
+            if not stations_to_update:
+                logger.info("No new stations to update")
+                return 0
+
+            logger.info(f"Found {len(stations_to_update)} stations to update")
+
+            # dynamic parameters for the query
+            seven_days_ago = datetime.now() - timedelta(days=7)
+            placeholders = ','.join(['%s'] * len(stations_to_update))
+            
+            update_query = f"""
+                INSERT INTO stations (
+                    id, latitude, longitude, address, city, zip_code, 
+                    department_code, region_code, geom, is_24h, services
+                )
+                SELECT 
+                    station_id,
+                    latitude,
+                    longitude,
+                    address,
+                    city,
+                    zip_code,
+                    department_code,
+                    region_code,
+                    geom_coordinates,
+                    automate_2424,
+                    COALESCE(
+                        CASE WHEN services->'service' IS NOT NULL THEN
+                            CASE WHEN jsonb_typeof(services->'service') = 'array' 
+                                THEN services->'service'
+                                ELSE jsonb_build_array(services->>'service')
+                            END
+                        END,
+                        '[]'::jsonb
+                    ) AS services
+                FROM instant_fr_fuel_price 
+                WHERE station_id IN ({placeholders})
+                    AND imported_date >= %s
+                ON CONFLICT (id) DO NOTHING;
+            """
+            
+            params = stations_to_update + [seven_days_ago]
+            cur.execute(update_query, params)
+            inserted_count = cur.rowcount
+            conn.commit()
+            
+            logger.info(f"Successfully inserted/updated {inserted_count} stations")
+            return inserted_count
+            
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error updating stations: {str(e)}", exc_info=True)
+        raise e
+

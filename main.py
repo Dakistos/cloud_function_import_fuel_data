@@ -5,7 +5,7 @@ from flask import jsonify
 from src.database.connection import create_connection
 from src.data_processing.csv_processor import process_csv
 from src.utils.download_csv_file import download_csv_file
-from src.data_processing.update_prices import delete_old_prices, import_to_fuel_prices
+from src.data_processing.update_prices import delete_old_prices, import_to_fuel_prices, update_stations
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
@@ -25,6 +25,7 @@ def fuel_import(request):
             csv_data = download_csv_file()
             rows_processed = process_csv(conn, csv_data)
             
+            stations_count = update_stations(conn)
             deleted_count = delete_old_prices(conn)
             imported_count = import_to_fuel_prices(conn)
             
@@ -33,8 +34,10 @@ def fuel_import(request):
                     'rows_processed': rows_processed,
                     'prices_imported': imported_count,
                     'old_data_deleted': deleted_count,
+                    'stations_updated': stations_count,
                     'timestamp': datetime.now(timezone.utc).isoformat()
             }), 200
+
 
         finally:
             conn.close()
